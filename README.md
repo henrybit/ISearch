@@ -2,6 +2,11 @@
 
 A fast, secure file search and security scanning application for macOS, Windows, and Linux.
 
+## Overview | 项目概述
+isearch 是一个基于 Rust 和 Tauri 2 的跨平台桌面应用，提供高性能的文件搜索和安全扫描功能。它利用 FST 和 LMDB 构建全文索引，集成 ClamAV 杀毒引擎，支持实时监控文件系统变化，确保用户能够快速找到文件并保障系统安全。
+
+![](image-1.png)
+
 ## Features | 功能特性
 
 - **快速文件搜索** - 基于 FST 和 LMDB 的高性能全文索引，支持模糊匹配和前缀搜索
