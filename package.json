@@ -1,0 +1,36 @@
+{
+	"name": "isearch-web",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"tauri": "npx @tauri-apps/cli build --bundles app && node scripts/copy-frontend.js",
+		"tauri:full": "npx @tauri-apps/cli build && node scripts/copy-frontend.js"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-static": "^3.0.10",
+		"@sveltejs/kit": "^2.57.0",
+		"@sveltejs/vite-plugin-svelte": "^7.0.0",
+		"@tailwindcss/typography": "^0.5.19",
+		"@tauri-apps/api": "^2.10.1",
+		"@tauri-apps/cli": "^2.10.1",
+		"autoprefixer": "^10.5.0",
+		"postcss": "^8.5.9",
+		"svelte": "^5.55.2",
+		"svelte-check": "^4.4.6",
+		"tailwindcss": "^4.2.2",
+		"typescript": "^6.0.2",
+		"vite": "^8.0.7"
+	},
+	"dependencies": {
+		"@tailwindcss/postcss": "^4.2.2",
+		"@tauri-apps/plugin-dialog": "^2.7.0",
+		"fuse.js": "^7.3.0"
+	}
+}
