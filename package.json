@@ -11,7 +11,11 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"tauri": "npx @tauri-apps/cli build --bundles app && node scripts/copy-frontend.js",
-		"tauri:full": "npx @tauri-apps/cli build && node scripts/copy-frontend.js"
+		"tauri:full": "npx @tauri-apps/cli build && node scripts/copy-frontend.js",
+		"tauri:windows": "npx @tauri-apps/cli build --target x86_64-pc-windows-msvc --bundles nsis && node scripts/copy-frontend.js && node scripts/print-tauri-artifacts.js",
+        "tauri:windows:full": "npx @tauri-apps/cli build --target x86_64-pc-windows-msvc && node scripts/copy-frontend.js && node scripts/print-tauri-artifacts.js",
+        "tauri:linux": "npx @tauri-apps/cli build --target x86_64-unknown-linux-gnu --bundles appimage && node scripts/copy-frontend.js && node scripts/print-tauri-artifacts.js",
+        "tauri:linux:full": "npx @tauri-apps/cli build --target x86_64-unknown-linux-gnu && node scripts/copy-frontend.js && node scripts/print-tauri-artifacts.js"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-static": "^3.0.10",
