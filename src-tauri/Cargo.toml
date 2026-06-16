@@ -54,5 +54,10 @@ notify = "6.1"
 # ClamAV antivirus scanning
 clamav-sys = "1.0"
 
+# Network traffic monitoring
+etherparse = "0.15"
+pcap = "1.1"
+ahash = "0.8"
+
 # Dialog for directory picker
 tauri-plugin-dialog = "2"

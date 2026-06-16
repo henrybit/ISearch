@@ -23,6 +23,9 @@ pub static SKIP_HIDDEN_DIRS: Lazy<Arc<Mutex<bool>>> =
 
 pub static IS_SCANNING: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(false)));
 
+pub static NETWORK_MONITOR: Lazy<Arc<core::network::NetworkMonitor>> =
+    Lazy::new(|| Arc::new(core::network::NetworkMonitor::new()));
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileEntry {
     pub id: i64,
@@ -709,6 +712,51 @@ fn collect_files_from_dir(dir: &str) -> Option<Vec<String>> {
         }
     }
     Some(files)
+}
+
+#[tauri::command]
+async fn list_network_interfaces() -> Result<Vec<core::network::types::NetworkInterface>, String> {
+    Ok(core::network::NetworkMonitor::list_interfaces())
+}
+
+#[tauri::command]
+async fn start_network_trace(
+    app: tauri::AppHandle,
+    interface: Option<String>,
+) -> Result<(), String> {
+    info!("[start_network_trace] interface={:?}", interface);
+    NETWORK_MONITOR.start(interface)?;
+
+    let app_handle = app.clone();
+    tokio::spawn(async move {
+        while NETWORK_MONITOR.is_tracing() {
+            if let Ok(snapshot) = NETWORK_MONITOR.snapshot() {
+                let _ = app_handle.emit("network-trace-update", &snapshot);
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        if let Ok(snapshot) = NETWORK_MONITOR.snapshot() {
+            let _ = app_handle.emit("network-trace-update", &snapshot);
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_network_trace(app: tauri::AppHandle) -> Result<(), String> {
+    info!("[stop_network_trace] Stopping network trace");
+    NETWORK_MONITOR.stop()?;
+    if let Ok(snapshot) = NETWORK_MONITOR.snapshot() {
+        let _ = app.emit("network-trace-update", &snapshot);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_network_trace_snapshot(
+) -> Result<core::network::types::NetworkTraceSnapshot, String> {
+    NETWORK_MONITOR.snapshot()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1512,6 +1560,10 @@ fn main() {
             read_log_file,
             get_overview_data,
             refresh_overview_data,
+            list_network_interfaces,
+            start_network_trace,
+            stop_network_trace,
+            get_network_trace_snapshot,
         ])
         .setup(move |app| {
             // Log app startup now that logger is set up

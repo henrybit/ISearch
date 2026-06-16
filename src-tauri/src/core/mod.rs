@@ -20,3 +20,6 @@ pub mod native_indexer;
 
 // ClamAV virus scanner
 pub mod clamav_scanner;
+
+// Network traffic monitoring
+pub mod network;

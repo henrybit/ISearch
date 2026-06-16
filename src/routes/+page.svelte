@@ -78,6 +78,7 @@
       overview: "概览",
       search: "搜索",
       securityScan: "安全扫描",
+      networkTrace: "网络追踪",
       searchPlaceholder: "输入关键词搜索文件",
       indexStatus: "已索引",
       files: "文件",
@@ -151,6 +152,7 @@
       overview: "Overview",
       search: "Search",
       securityScan: "Security Scan",
+      networkTrace: "Network Trace",
       searchPlaceholder: "Enter keywords to search files",
       indexStatus: "Indexed",
       files: "files",
@@ -245,8 +247,57 @@
   let selectedScanReport = $state<ScanHistoryItem | null>(null);
 
   // App mode
-  type AppMode = "overview" | "search" | "security";
+  type AppMode = "overview" | "search" | "security" | "network";
   let appMode = $state<AppMode>("overview");
+
+  // Network trace state
+  interface NetworkInterface {
+    name: string;
+    description: string;
+  }
+  interface ConnectionView {
+    id: string;
+    protocol: string;
+    src_ip: string;
+    src_port: number;
+    dst_ip: string;
+    dst_port: number;
+    domain: string | null;
+    state: string;
+    bytes_up: number;
+    bytes_down: number;
+    first_seen: string;
+    last_seen: string;
+  }
+  interface TopEntry {
+    key: string;
+    bytes: number;
+    connections: number;
+  }
+  interface WindowStatsView {
+    bytes_total: number;
+    bytes_up: number;
+    bytes_down: number;
+    new_connections: number;
+    closed_connections: number;
+    active_connections: number;
+    bytes_per_sec: number;
+  }
+  interface NetworkTraceSnapshot {
+    is_tracing: boolean;
+    interface: string;
+    connections: ConnectionView[];
+    stats: WindowStatsView;
+    top_domains: TopEntry[];
+    top_ips: TopEntry[];
+    packets_captured: number;
+    error: string | null;
+  }
+  let isNetworkTracing = $state(false);
+  let networkInterfaces = $state<NetworkInterface[]>([]);
+  let selectedInterface = $state("");
+  let networkSnapshot = $state<NetworkTraceSnapshot | null>(null);
+  let networkError = $state("");
 
   // Overview stats state
   interface DiskStats {
@@ -342,6 +393,14 @@
       isIndexing = event.payload.is_indexing;
       indexedFiles = event.payload.file_count;
       lastIndexed = event.payload.last_indexed;
+    });
+
+    await listen("network-trace-update", (event: any) => {
+      networkSnapshot = event.payload as NetworkTraceSnapshot;
+      isNetworkTracing = networkSnapshot?.is_tracing ?? false;
+      if (networkSnapshot?.error) {
+        networkError = networkSnapshot.error;
+      }
     });
   });
 
@@ -598,9 +657,63 @@
     isScanning = false;
   }
 
+  function formatBytes(bytes: number): string {
+    const KB = 1024;
+    const MB = KB * 1024;
+    const GB = MB * 1024;
+    if (bytes >= GB) return (bytes / GB).toFixed(2) + " GB";
+    if (bytes >= MB) return (bytes / MB).toFixed(2) + " MB";
+    if (bytes >= KB) return (bytes / KB).toFixed(2) + " KB";
+    return bytes + " B";
+  }
+
+  function formatRate(bytesPerSec: number): string {
+    return formatBytes(bytesPerSec) + "/s";
+  }
+
+  async function loadNetworkInterfaces() {
+    try {
+      networkInterfaces = await invoke<NetworkInterface[]>("list_network_interfaces");
+      if (networkInterfaces.length > 0 && !selectedInterface) {
+        selectedInterface = networkInterfaces[0].name;
+      }
+    } catch (e) {
+      console.error("Failed to load network interfaces:", e);
+      networkError = String(e);
+    }
+  }
+
+  async function startNetworkTrace() {
+    if (isNetworkTracing) return;
+    networkError = "";
+    try {
+      await invoke("start_network_trace", {
+        interface: selectedInterface || null,
+      });
+      isNetworkTracing = true;
+    } catch (e) {
+      console.error("Network trace failed:", e);
+      networkError = String(e);
+      isNetworkTracing = false;
+    }
+  }
+
+  async function stopNetworkTrace() {
+    try {
+      await invoke("stop_network_trace");
+    } catch (e) {
+      console.error("Failed to stop network trace:", e);
+    } finally {
+      isNetworkTracing = false;
+    }
+  }
+
   function switchMode(mode: AppMode) {
     appMode = mode;
     activeMenu = "none";
+    if (mode === "network") {
+      loadNetworkInterfaces();
+    }
   }
 
   async function startIndexing() {
@@ -970,6 +1083,13 @@
       >
         {t("securityScan")}
       </button>
+      <button
+        class="mode-btn"
+        class:active={appMode === "network"}
+        onclick={() => switchMode("network")}
+      >
+        {t("networkTrace")}
+      </button>
     </div>
     <div class="menu-spacer"></div>
     <button
@@ -1196,6 +1316,156 @@
       {#if !isScanning && scanResults.length > 0}
         <div class="scan-actions">
           <button class="rescan-btn" onclick={startSecurityScan}>{currentLang === "zh" ? "重新扫描" : "Rescan"}</button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Network Trace Panel -->
+  {#if appMode === "network"}
+    <div class="network-panel">
+      <div class="network-header">
+        <h2>{t("networkTrace")}</h2>
+        <p class="network-desc">
+          {currentLang === "zh"
+            ? "监测本机网络流量，追踪外部域名、IP、端口与连接生命周期"
+            : "Monitor local network traffic, track domains, IPs, ports and connection lifecycle"}
+        </p>
+      </div>
+
+      <div class="network-controls">
+        <div class="interface-selector">
+          <label for="iface-select">
+            {currentLang === "zh" ? "网络接口" : "Interface"}
+          </label>
+          <select id="iface-select" bind:value={selectedInterface} disabled={isNetworkTracing}>
+            {#each networkInterfaces as iface}
+              <option value={iface.name}>{iface.name} — {iface.description}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="trace-actions">
+          {#if !isNetworkTracing}
+            <button class="trace-start-btn" onclick={startNetworkTrace}>
+              {currentLang === "zh" ? "开始追踪" : "Start Trace"}
+            </button>
+          {:else}
+            <button class="trace-stop-btn" onclick={stopNetworkTrace}>
+              {currentLang === "zh" ? "停止追踪" : "Stop Trace"}
+            </button>
+            <span class="tracing-indicator">
+              <span class="pulse-dot"></span>
+              {currentLang === "zh" ? "追踪中" : "Tracing"}
+            </span>
+          {/if}
+        </div>
+      </div>
+
+      {#if networkError}
+        <div class="network-error">
+          {networkError}
+          <p class="hint">
+            {currentLang === "zh"
+              ? "macOS 需在系统设置中授权网络抓包，或使用 sudo 运行应用"
+              : "On macOS, grant packet capture permission or run with elevated privileges"}
+          </p>
+        </div>
+      {/if}
+
+      {#if networkSnapshot}
+        <div class="network-stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">{currentLang === "zh" ? "总流量" : "Total"}</span>
+            <span class="stat-value">{formatBytes(networkSnapshot.stats.bytes_total)}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">{currentLang === "zh" ? "上行" : "Upload"}</span>
+            <span class="stat-value">{formatBytes(networkSnapshot.stats.bytes_up)}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">{currentLang === "zh" ? "下行" : "Download"}</span>
+            <span class="stat-value">{formatBytes(networkSnapshot.stats.bytes_down)}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">{currentLang === "zh" ? "速率" : "Rate"}</span>
+            <span class="stat-value">{formatRate(networkSnapshot.stats.bytes_per_sec)}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">{currentLang === "zh" ? "活跃连接" : "Active"}</span>
+            <span class="stat-value">{networkSnapshot.stats.active_connections}</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">{currentLang === "zh" ? "已捕获包" : "Packets"}</span>
+            <span class="stat-value">{networkSnapshot.packets_captured}</span>
+          </div>
+        </div>
+
+        <div class="network-top-section">
+          <div class="top-panel">
+            <h3>{currentLang === "zh" ? "Top 域名" : "Top Domains"}</h3>
+            {#if networkSnapshot.top_domains.length === 0}
+              <p class="empty-hint">{currentLang === "zh" ? "暂无数据" : "No data yet"}</p>
+            {:else}
+              {#each networkSnapshot.top_domains as entry}
+                <div class="top-item">
+                  <span class="top-key">{entry.key}</span>
+                  <span class="top-bytes">{formatBytes(entry.bytes)}</span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+          <div class="top-panel">
+            <h3>{currentLang === "zh" ? "Top 远程 IP" : "Top Remote IPs"}</h3>
+            {#if networkSnapshot.top_ips.length === 0}
+              <p class="empty-hint">{currentLang === "zh" ? "暂无数据" : "No data yet"}</p>
+            {:else}
+              {#each networkSnapshot.top_ips as entry}
+                <div class="top-item">
+                  <span class="top-key">{entry.key}</span>
+                  <span class="top-bytes">{formatBytes(entry.bytes)}</span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </div>
+
+        <div class="connections-section">
+          <h3>
+            {currentLang === "zh" ? "连接列表" : "Connections"}
+            <span class="conn-count">({networkSnapshot.connections.length})</span>
+          </h3>
+          {#if networkSnapshot.connections.length === 0}
+            <p class="empty-hint">
+              {currentLang === "zh"
+                ? "开始追踪后将显示 TCP/UDP 连接"
+                : "TCP/UDP connections will appear after tracing starts"}
+            </p>
+          {:else}
+            <div class="connections-table">
+              <div class="conn-header">
+                <span>{currentLang === "zh" ? "协议" : "Proto"}</span>
+                <span>{currentLang === "zh" ? "域名" : "Domain"}</span>
+                <span>{currentLang === "zh" ? "目标" : "Destination"}</span>
+                <span>{currentLang === "zh" ? "状态" : "State"}</span>
+                <span>{currentLang === "zh" ? "流量" : "Traffic"}</span>
+              </div>
+              {#each networkSnapshot.connections.slice(0, 100) as conn}
+                <div class="conn-row">
+                  <span class="conn-proto">{conn.protocol}</span>
+                  <span class="conn-domain">{conn.domain || "—"}</span>
+                  <span class="conn-dest">{conn.dst_ip}:{conn.dst_port}</span>
+                  <span class="conn-state" class:established={conn.state === "established"}>{conn.state}</span>
+                  <span class="conn-traffic">
+                    ↑{formatBytes(conn.bytes_up)} ↓{formatBytes(conn.bytes_down)}
+                  </span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {:else if !isNetworkTracing}
+        <div class="network-empty">
+          <p>{currentLang === "zh" ? "选择网络接口并点击开始追踪" : "Select an interface and click Start Trace"}</p>
         </div>
       {/if}
     </div>
@@ -2848,6 +3118,293 @@
   .rescan-btn:hover {
     border-color: #4a72ff;
     color: #4a72ff;
+  }
+
+  /* Network Trace Panel */
+  .network-panel {
+    background: white;
+    border-bottom: 1px solid #e3e9f4;
+    padding: 24px;
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+  }
+
+  .network-header {
+    margin-bottom: 20px;
+  }
+
+  .network-header h2 {
+    margin: 0 0 4px 0;
+    color: #1f2636;
+    font-size: 18px;
+  }
+
+  .network-desc {
+    color: #5d6a82;
+    font-size: 13px;
+    margin: 0;
+  }
+
+  .network-controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+
+  .interface-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 240px;
+  }
+
+  .interface-selector label {
+    font-size: 12px;
+    color: #5d6a82;
+  }
+
+  .interface-selector select {
+    height: 36px;
+    border: 1px solid #d7e0ef;
+    border-radius: 8px;
+    padding: 0 12px;
+    font-size: 13px;
+    background: white;
+    color: #1f2636;
+  }
+
+  .trace-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .trace-start-btn {
+    padding: 8px 24px;
+    border: none;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #4d77ff 0%, #4268e8 100%);
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .trace-stop-btn {
+    padding: 8px 24px;
+    border: 1px solid #fca5a5;
+    border-radius: 8px;
+    background: #fef2f2;
+    color: #dc2626;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .tracing-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #16a34a;
+  }
+
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #16a34a;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .network-error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: #991b1b;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  .network-error .hint {
+    margin: 8px 0 0 0;
+    color: #b91c1c;
+    font-size: 12px;
+  }
+
+  .network-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .stat-card {
+    background: #f7f9ff;
+    border: 1px solid #e3e9f4;
+    border-radius: 10px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: #5d6a82;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .stat-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2636;
+  }
+
+  .network-top-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  @media (max-width: 768px) {
+    .network-top-section {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .top-panel {
+    background: #fafbff;
+    border: 1px solid #e3e9f4;
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+
+  .top-panel h3 {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    color: #1f2636;
+  }
+
+  .top-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #eef2f8;
+    font-size: 12px;
+  }
+
+  .top-key {
+    color: #1f2636;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 70%;
+  }
+
+  .top-bytes {
+    color: #4a72ff;
+    font-weight: 500;
+  }
+
+  .empty-hint {
+    color: #9ca3af;
+    font-size: 12px;
+    margin: 0;
+  }
+
+  .connections-section h3 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    color: #1f2636;
+  }
+
+  .conn-count {
+    color: #9ca3af;
+    font-weight: normal;
+  }
+
+  .connections-table {
+    border: 1px solid #e3e9f4;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .conn-header,
+  .conn-row {
+    display: grid;
+    grid-template-columns: 60px 1fr 160px 90px 140px;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    align-items: center;
+  }
+
+  .conn-header {
+    background: #f0f4ff;
+    color: #5d6a82;
+    font-weight: 600;
+    border-bottom: 1px solid #e3e9f4;
+  }
+
+  .conn-row {
+    border-bottom: 1px solid #f0f4f8;
+    color: #1f2636;
+  }
+
+  .conn-row:last-child {
+    border-bottom: none;
+  }
+
+  .conn-row:hover {
+    background: #f7f9ff;
+  }
+
+  .conn-proto {
+    font-weight: 600;
+    color: #4a72ff;
+  }
+
+  .conn-domain {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conn-dest {
+    font-family: monospace;
+    font-size: 11px;
+  }
+
+  .conn-state {
+    text-transform: capitalize;
+    color: #9ca3af;
+  }
+
+  .conn-state.established {
+    color: #16a34a;
+  }
+
+  .conn-traffic {
+    font-size: 11px;
+    color: #5d6a82;
+  }
+
+  .network-empty {
+    text-align: center;
+    padding: 40px;
+    color: #9ca3af;
+    font-size: 14px;
   }
 
   .help-content {
