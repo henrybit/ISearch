@@ -5,7 +5,9 @@ use super::types::{L4Proto, ParsedPacket, TcpFlags};
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
 
 pub fn parse_packet(data: &[u8]) -> Option<ParsedPacket> {
-    let sp = SlicedPacket::from_ethernet(data).ok()?;
+    let sp = SlicedPacket::from_ethernet(data)
+        .or_else(|_| SlicedPacket::from_ip(data))
+        .ok()?;
 
     let (src_ip, dst_ip) = match sp.net? {
         NetSlice::Ipv4(ip) => {

@@ -27,7 +27,7 @@ impl PcapSource {
             .open()
             .map_err(|e| format!("无法启动抓包: {} (可能需要管理员/root权限)", e))?;
 
-        cap.filter("tcp or (udp and port 53)", true)
+        cap.filter("tcp or (udp port 53 or udp port 5353)", true)
             .map_err(|e| format!("无法设置 BPF 过滤器: {}", e))?;
 
         Ok(Self { cap })

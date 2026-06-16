@@ -114,14 +114,19 @@ impl NetworkMonitor {
                         match &event {
                             types::RawEvent::Packet { data, .. } => {
                                 if let Some(pkt) = parser::parse_packet(data) {
-                                    if let Ok(mut t) = tracker.lock() {
-                                        t.on_packet(&pkt, &pkt.l4_payload);
-                                    }
+                                    let domain = {
+                                        if let Ok(mut t) = tracker.lock() {
+                                            t.on_packet(&pkt, &pkt.l4_payload);
+                                            t.resolve_domain(pkt.dst_ip)
+                                        } else {
+                                            None
+                                        }
+                                    };
                                     if let Ok(mut s) = stats.lock() {
                                         s.record_packet(
                                             pkt.total_len as u64,
                                             0,
-                                            None,
+                                            domain.as_deref(),
                                             pkt.dst_ip,
                                         );
                                     }
@@ -213,8 +218,15 @@ impl NetworkMonitor {
         };
 
         let top_domains = {
-            let stats = self.stats.lock().map_err(|e| e.to_string())?;
-            stats.top_domains()
+            let tracker = self.tracker.lock().map_err(|e| e.to_string())?;
+            let from_tracker = tracker.top_domains(20);
+            if !from_tracker.is_empty() {
+                from_tracker
+            } else {
+                drop(tracker);
+                let stats = self.stats.lock().map_err(|e| e.to_string())?;
+                stats.top_domains()
+            }
         };
 
         let top_ips = {

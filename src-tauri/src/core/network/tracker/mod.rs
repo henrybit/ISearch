@@ -1,12 +1,12 @@
 use super::parser::{dns, tls_sni};
-use super::types::{ConnState, Connection, FiveTuple, L4Proto, ParsedPacket};
+use super::types::{ConnState, Connection, FiveTuple, L4Proto, ParsedPacket, TopEntry};
 use ahash::AHashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 pub struct ConnectionTracker {
     by_tuple: AHashMap<FiveTuple, Connection>,
-    dns_to_ip: AHashMap<String, Vec<(IpAddr, Instant)>>,
+    ip_to_domain: AHashMap<IpAddr, String>,
     stale_after: Duration,
 }
 
@@ -14,7 +14,7 @@ impl ConnectionTracker {
     pub fn new() -> Self {
         Self {
             by_tuple: AHashMap::new(),
-            dns_to_ip: AHashMap::new(),
+            ip_to_domain: AHashMap::new(),
             stale_after: Duration::from_secs(300),
         }
     }
@@ -28,13 +28,16 @@ impl ConnectionTracker {
             dst_port: dst.port(),
         };
         let now = Instant::now();
-        let domain = self.lookup_domain(dst.ip());
+        let domain = self.resolve_domain(dst.ip());
 
         if let Some(conn) = self.by_tuple.get_mut(&key) {
             conn.state = ConnState::Established;
             conn.last_seen = now;
             if pid.is_some() {
                 conn.pid = pid;
+            }
+            if conn.domain.is_none() {
+                conn.domain = domain;
             }
         } else {
             self.by_tuple.insert(
@@ -86,10 +89,14 @@ impl ConnectionTracker {
         };
 
         let pkt_len = pkt.total_len as u64;
+        let resolved_domain = self.resolve_domain(pkt.dst_ip);
 
         if let Some(conn) = self.by_tuple.get_mut(&key) {
             conn.bytes_up += pkt_len;
             conn.last_seen = now;
+            if conn.domain.is_none() {
+                conn.domain = resolved_domain.clone();
+            }
             apply_tcp_state(conn, pkt);
         } else if let Some(conn) = self.by_tuple.get_mut(&reverse_key) {
             conn.bytes_down += pkt_len;
@@ -101,7 +108,6 @@ impl ConnectionTracker {
                     state = ConnState::SynSent;
                 }
             }
-            let domain = self.lookup_domain(pkt.dst_ip);
             self.by_tuple.insert(
                 key,
                 Connection {
@@ -111,66 +117,49 @@ impl ConnectionTracker {
                     last_seen: now,
                     bytes_up: pkt_len,
                     bytes_down: 0,
-                    domain,
+                    domain: resolved_domain,
                     pid: None,
                 },
             );
         }
 
-        if pkt.proto == L4Proto::Tcp && (pkt.dst_port == 443 || pkt.dst_port == 8443) {
-            if let Some(sni) = tls_sni::extract_sni(payload) {
-                self.on_sni(pkt.dst_ip, pkt.dst_port, sni);
+        if pkt.proto == L4Proto::Tcp {
+            let looks_like_tls =
+                payload.len() >= 5 && payload[0] == 0x16 && payload[1] == 0x03;
+            let tls_port = matches!(pkt.dst_port, 443 | 853 | 8443 | 9443 | 4443);
+            if tls_port || looks_like_tls {
+                if let Some(sni) = tls_sni::extract_sni(payload) {
+                    self.associate_domain(pkt.dst_ip, pkt.dst_port, sni);
+                }
             }
         }
 
         if pkt.proto == L4Proto::Udp && (pkt.src_port == 53 || pkt.dst_port == 53) {
             if let Some(info) = dns::parse_dns(payload) {
-                for (name, ip) in info.answers {
-                    self.on_dns_response(&name, &[ip]);
-                }
-                for query in info.queries {
-                    self.dns_to_ip
-                        .entry(query)
-                        .or_default()
-                        .push((pkt.dst_ip, now));
+                let query_name = info.queries.first().cloned();
+                for (answer_name, ip) in info.answers {
+                    let domain = query_name.clone().unwrap_or(answer_name);
+                    self.associate_domain(ip, 0, domain);
                 }
             }
         }
     }
 
-    pub fn on_dns_response(&mut self, queried: &str, resolved: &[IpAddr]) {
-        let now = Instant::now();
-        for ip in resolved {
-            self.dns_to_ip
-                .entry(ip.to_string())
-                .or_default()
-                .push((*ip, now));
-
-            for conn in self.by_tuple.values_mut() {
-                if conn.key.dst_ip == *ip && conn.domain.is_none() {
-                    conn.domain = Some(queried.to_string());
-                }
-            }
+    fn associate_domain(&mut self, ip: IpAddr, port: u16, domain: String) {
+        if domain.is_empty() {
+            return;
         }
-    }
+        self.ip_to_domain.insert(ip, domain.clone());
 
-    pub fn on_sni(&mut self, dst_ip: IpAddr, dst_port: u16, sni: String) {
         for conn in self.by_tuple.values_mut() {
-            if conn.key.dst_ip == dst_ip && conn.key.dst_port == dst_port {
-                conn.domain = Some(sni.clone());
+            if conn.key.dst_ip == ip && (port == 0 || conn.key.dst_port == port) {
+                conn.domain = Some(domain.clone());
             }
         }
-        self.dns_to_ip
-            .entry(sni)
-            .or_default()
-            .push((dst_ip, Instant::now()));
     }
 
-    fn lookup_domain(&self, ip: IpAddr) -> Option<String> {
-        self.by_tuple
-            .values()
-            .find(|c| c.key.dst_ip == ip)
-            .and_then(|c| c.domain.clone())
+    pub fn resolve_domain(&self, ip: IpAddr) -> Option<String> {
+        self.ip_to_domain.get(&ip).cloned()
     }
 
     pub fn gc(&mut self) {
@@ -181,6 +170,31 @@ impl ConnectionTracker {
 
     pub fn snapshot(&self) -> Vec<Connection> {
         self.by_tuple.values().cloned().collect()
+    }
+
+    pub fn top_domains(&self, top_n: usize) -> Vec<TopEntry> {
+        let mut bytes_by_domain: AHashMap<String, (u64, u64)> = AHashMap::new();
+        for conn in self.by_tuple.values() {
+            if let Some(domain) = &conn.domain {
+                if domain.is_empty() {
+                    continue;
+                }
+                let entry = bytes_by_domain.entry(domain.clone()).or_insert((0, 0));
+                entry.0 += conn.bytes_up + conn.bytes_down;
+                entry.1 += 1;
+            }
+        }
+        let mut entries: Vec<TopEntry> = bytes_by_domain
+            .into_iter()
+            .map(|(key, (bytes, connections))| TopEntry {
+                key,
+                bytes,
+                connections,
+            })
+            .collect();
+        entries.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+        entries.truncate(top_n);
+        entries
     }
 
     pub fn active_count(&self) -> u64 {
