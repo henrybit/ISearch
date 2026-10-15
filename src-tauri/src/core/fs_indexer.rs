@@ -4,11 +4,14 @@
 //! - macOS: mdfind (Spotlight) - extremely fast
 //! - Windows: NTFS MFT direct reading - similar to Everything
 //! - Fallback: WalkDir for other platforms
+//!
+//! Also provides live fuzzy filename search used when the local index misses.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Unified file metadata returned by all indexers
 #[derive(Debug, Clone)]
@@ -340,6 +343,231 @@ impl FileIndexer for WalkDirIndexer {
     }
 }
 
+// ============================================================================
+// Live fuzzy filename search (index-miss fallback)
+// ============================================================================
+
+/// Escape a string for use inside a Spotlight query literal.
+fn escape_spotlight_literal(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn system_time_to_unix(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn metadata_from_path(path: &str) -> Option<FileMetadata> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    Some(FileMetadata {
+        path: path.to_string(),
+        size: if meta.is_file() { meta.len() } else { 0 },
+        is_directory: meta.is_dir(),
+        modified_at: meta
+            .modified()
+            .map(system_time_to_unix)
+            .unwrap_or(0),
+        created_at: meta
+            .created()
+            .map(system_time_to_unix)
+            .unwrap_or(0),
+    })
+}
+
+fn filename_fuzzy_match(filename: &str, query: &str) -> bool {
+    let name = filename.to_lowercase();
+    let q = query.to_lowercase();
+    if q.is_empty() {
+        return false;
+    }
+    // Substring match (primary "模糊" behaviour)
+    if name.contains(&q) {
+        return true;
+    }
+    // Subsequence match: query chars appear in order (e.g. "cfg" → "config")
+    let mut it = name.chars();
+    for ch in q.chars() {
+        loop {
+            match it.next() {
+                Some(c) if c == ch => break,
+                Some(_) => continue,
+                None => return false,
+            }
+        }
+    }
+    true
+}
+
+/// Live full-disk (or home-tree) fuzzy filename search.
+///
+/// - macOS: Spotlight via `mdfind` on `kMDItemFSName`
+/// - other platforms: WalkDir over the user home directory
+pub fn live_fuzzy_filename_search(query: &str, limit: usize) -> Result<Vec<FileMetadata>> {
+    let query = query.trim();
+    if query.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    info!(
+        "[live_search] Starting fuzzy filename search query=\"{}\" limit={}",
+        query, limit
+    );
+
+    #[cfg(target_os = "macos")]
+    {
+        match live_search_mdfind(query, limit) {
+            Ok(results) if !results.is_empty() => {
+                info!("[live_search] mdfind returned {} results", results.len());
+                return Ok(results);
+            }
+            Ok(_) => {
+                info!("[live_search] mdfind returned 0 results, falling back to WalkDir");
+            }
+            Err(e) => {
+                warn!("[live_search] mdfind failed: {}, falling back to WalkDir", e);
+            }
+        }
+    }
+
+    live_search_walkdir(query, limit)
+}
+
+#[cfg(target_os = "macos")]
+fn live_search_mdfind(query: &str, limit: usize) -> Result<Vec<FileMetadata>> {
+    let escaped = escape_spotlight_literal(query);
+    // Case-insensitive (`c`) filename contains match
+    let spotlight_query = format!("kMDItemFSName == \"*{escaped}*\"c");
+
+    let output = Command::new("mdfind")
+        .arg(&spotlight_query)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("mdfind failed: {}", stderr.trim());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut results = Vec::with_capacity(limit.min(256));
+
+    for line in stdout.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(meta) = metadata_from_path(line) {
+            results.push(meta);
+            if results.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+fn live_search_walkdir(query: &str, limit: usize) -> Result<Vec<FileMetadata>> {
+    use walkdir::WalkDir;
+
+    let roots: Vec<PathBuf> = {
+        let mut roots = Vec::new();
+        if let Some(home) = dirs::home_dir() {
+            roots.push(home);
+        }
+        // Common extra roots when home is missing / for broader coverage
+        #[cfg(target_os = "macos")]
+        {
+            roots.push(PathBuf::from("/Applications"));
+            roots.push(PathBuf::from("/Users"));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(userprofile) = std::env::var("USERPROFILE") {
+                let p = PathBuf::from(userprofile);
+                if !roots.contains(&p) {
+                    roots.push(p);
+                }
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            roots.push(PathBuf::from("/home"));
+        }
+        roots
+    };
+
+    let skip_dirs = [
+        "Library/Caches",
+        "Library/Logs",
+        ".Trash",
+        "node_modules",
+        ".git",
+        "target",
+        "__pycache__",
+        ".npm",
+        ".cache",
+    ];
+
+    let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for root in roots {
+        if !root.exists() {
+            continue;
+        }
+        for entry in WalkDir::new(&root)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy();
+                // Skip hidden top-level components except common ones we care about
+                if name.starts_with('.') && name != ".config" && name != ".local" {
+                    return false;
+                }
+                let path_str = e.path().to_string_lossy();
+                !skip_dirs.iter().any(|s| path_str.contains(s))
+            })
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !filename_fuzzy_match(filename, query) {
+                continue;
+            }
+
+            let path_str = path.to_string_lossy().to_string();
+            if !seen.insert(path_str.clone()) {
+                continue;
+            }
+
+            if let Some(meta) = metadata_from_path(&path_str) {
+                results.push(meta);
+                if results.len() >= limit {
+                    info!(
+                        "[live_search] WalkDir found {} matches (limit reached)",
+                        results.len()
+                    );
+                    return Ok(results);
+                }
+            }
+        }
+    }
+
+    info!("[live_search] WalkDir found {} matches", results.len());
+    Ok(results)
+}
+
+/// Convenience: check whether a path's filename fuzzy-matches the query.
+#[allow(dead_code)]
+pub fn path_matches_fuzzy(path: &Path, query: &str) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| filename_fuzzy_match(n, query))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +584,12 @@ mod tests {
         let results = indexer.index("/tmp").unwrap();
         // Just check it doesn't crash
         assert!(results.len() >= 0);
+    }
+
+    #[test]
+    fn test_filename_fuzzy_match() {
+        assert!(filename_fuzzy_match("Config.json", "config"));
+        assert!(filename_fuzzy_match("my-config-file.txt", "cfg"));
+        assert!(!filename_fuzzy_match("readme.md", "xyz"));
     }
 }

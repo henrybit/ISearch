@@ -1,6 +1,7 @@
 pub mod database;
 pub mod indexer;
 pub mod search;
+pub mod search_cache;
 pub mod watcher;
 
 // Storage modules

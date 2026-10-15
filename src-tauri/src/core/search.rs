@@ -2,12 +2,17 @@
 //!
 //! ULTRA-SIMPLIFIED: Results are paginated to limit memory usage.
 //! Max 10MB buffer for search results.
+//!
+//! When the local index misses, falls back to live full-disk fuzzy
+//! filename search with a 6-hour on-disk result cache.
 
 use std::path::PathBuf;
 use anyhow::Result;
-use tracing::{debug, info};
+use tracing::{info, warn};
 
 use crate::core::database;
+use crate::core::fs_indexer::{self, FileMetadata};
+use crate::core::search_cache::{CachedHit, SearchCache};
 use crate::models::FileEntry;
 
 /// Maximum result buffer size (10MB)
@@ -247,6 +252,15 @@ impl SearchEngine {
 
         info!("[search] Total search_results (paths): {}", search_results.len());
 
+        // Index miss → live fuzzy filename search + disk cache
+        if search_results.is_empty() && !query.text.is_empty() {
+            info!(
+                "[search] Index miss for \"{}\", falling back to live fuzzy search",
+                query.text
+            );
+            return self.live_fallback_search(query);
+        }
+
         // Calculate effective limit based on memory budget
         let effective_limit = query.limit.min(MAX_ENTRIES_IN_BUFFER);
         let search_to_fetch: Vec<String> = search_results
@@ -259,28 +273,7 @@ impl SearchEngine {
         let mut entries = Vec::new();
         for path in search_to_fetch {
             if let Ok(Some(meta)) = database::get_file_by_path(&path) {
-                let path_buf = PathBuf::from(&meta.path);
-                let filename = path_buf
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                let extension = path_buf
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|s| s.to_string());
-
-                entries.push(FileEntry {
-                    id: meta.id as i64,
-                    path: path_buf,
-                    filename,
-                    extension,
-                    size: meta.size,
-                    is_directory: meta.is_directory,
-                    created_at: chrono::DateTime::from_timestamp(meta.created_at, 0).unwrap_or_default(),
-                    modified_at: chrono::DateTime::from_timestamp(meta.modified_at, 0).unwrap_or_default(),
-                    indexed_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
-                });
+                entries.push(Self::file_entry_from_indexed(&meta));
             }
         }
 
@@ -291,6 +284,103 @@ impl SearchEngine {
         self.sort_entries(&mut entries, query);
 
         Ok(entries)
+    }
+
+    /// Live filesystem fuzzy search used when the index returns no hits.
+    /// Results are cached on disk for 6 hours.
+    fn live_fallback_search(&self, query: &SearchQuery) -> Result<Vec<FileEntry>> {
+        let cache = SearchCache::new();
+        cache.purge_expired();
+
+        let effective_limit = query.limit.min(MAX_ENTRIES_IN_BUFFER);
+        // Fetch a bit more than needed so filters still have room
+        let fetch_limit = (effective_limit + query.offset).saturating_mul(2).max(effective_limit);
+
+        let metas: Vec<FileMetadata> = if let Some(hits) = cache.get(&query.text) {
+            hits.into_iter()
+                .take(fetch_limit)
+                .map(FileMetadata::from)
+                .collect()
+        } else {
+            let found = fs_indexer::live_fuzzy_filename_search(&query.text, fetch_limit)?;
+            let cached: Vec<CachedHit> = found.iter().map(CachedHit::from).collect();
+            if let Err(e) = cache.put(&query.text, &cached) {
+                warn!("[search] Failed to write search cache: {}", e);
+            }
+            found
+        };
+
+        let mut entries: Vec<FileEntry> = metas
+            .into_iter()
+            .map(|m| Self::file_entry_from_live(&m))
+            .collect();
+
+        self.apply_filters(&mut entries, query);
+        self.sort_entries(&mut entries, query);
+
+        let entries: Vec<FileEntry> = entries
+            .into_iter()
+            .skip(query.offset)
+            .take(effective_limit)
+            .collect();
+
+        info!(
+            "[search] Live fallback returned {} results for \"{}\"",
+            entries.len(),
+            query.text
+        );
+        Ok(entries)
+    }
+
+    fn file_entry_from_indexed(meta: &database::FileMetadata) -> FileEntry {
+        let path_buf = PathBuf::from(&meta.path);
+        let filename = path_buf
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let extension = path_buf
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_string());
+
+        FileEntry {
+            id: meta.id as i64,
+            path: path_buf,
+            filename,
+            extension,
+            size: meta.size,
+            is_directory: meta.is_directory,
+            created_at: chrono::DateTime::from_timestamp(meta.created_at, 0).unwrap_or_default(),
+            modified_at: chrono::DateTime::from_timestamp(meta.modified_at, 0).unwrap_or_default(),
+            indexed_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
+        }
+    }
+
+    fn file_entry_from_live(meta: &FileMetadata) -> FileEntry {
+        let path_buf = PathBuf::from(&meta.path);
+        let filename = path_buf
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let extension = path_buf
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_string());
+
+        FileEntry {
+            // Negative id marks live/non-indexed hits
+            id: -1,
+            path: path_buf,
+            filename,
+            extension,
+            size: meta.size,
+            is_directory: meta.is_directory,
+            created_at: chrono::DateTime::from_timestamp(meta.created_at, 0).unwrap_or_default(),
+            modified_at: chrono::DateTime::from_timestamp(meta.modified_at, 0).unwrap_or_default(),
+            indexed_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
+        }
     }
 
     fn get_all_files(&self, query: &SearchQuery) -> Result<Vec<FileEntry>> {
