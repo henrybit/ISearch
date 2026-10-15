@@ -933,10 +933,60 @@
   }
 
   function getFileType(entry: FileEntry): string {
-    if (entry.is_directory) return "文件夹";
+    if (entry.is_directory) return currentLang === "zh" ? "文件夹" : "Folder";
     const parts = entry.filename.split(".");
-    if (parts.length < 2) return "未知类型";
-    return `${parts.pop()?.toUpperCase()} 文件`;
+    if (parts.length < 2) return currentLang === "zh" ? "未知类型" : "Unknown";
+    return currentLang === "zh"
+      ? `${parts.pop()?.toUpperCase()} 文件`
+      : `${parts.pop()?.toUpperCase()} file`;
+  }
+
+  type FileIconKind =
+    | "folder"
+    | "image"
+    | "video"
+    | "audio"
+    | "code"
+    | "document"
+    | "pdf"
+    | "archive"
+    | "spreadsheet"
+    | "presentation"
+    | "executable"
+    | "text"
+    | "file";
+
+  function getFileIconKind(entry: FileEntry): FileIconKind {
+    if (entry.is_directory) return "folder";
+    const ext = (entry.filename.includes(".")
+      ? entry.filename.split(".").pop()
+      : ""
+    )?.toLowerCase() ?? "";
+
+    if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "heic", "tiff", "avif"].includes(ext)) {
+      return "image";
+    }
+    if (["mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v"].includes(ext)) {
+      return "video";
+    }
+    if (["mp3", "wav", "flac", "aac", "m4a", "ogg", "wma", "aiff"].includes(ext)) {
+      return "audio";
+    }
+    if (["js", "ts", "tsx", "jsx", "py", "rs", "go", "java", "c", "cpp", "h", "hpp", "cs", "swift", "kt", "rb", "php", "html", "css", "scss", "vue", "svelte", "json", "xml", "yaml", "yml", "toml", "sql", "sh", "bash", "zsh"].includes(ext)) {
+      return "code";
+    }
+    if (["pdf"].includes(ext)) return "pdf";
+    if (["doc", "docx", "rtf", "odt", "pages"].includes(ext)) return "document";
+    if (["xls", "xlsx", "csv", "numbers", "ods"].includes(ext)) return "spreadsheet";
+    if (["ppt", "pptx", "key", "odp"].includes(ext)) return "presentation";
+    if (["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "dmg", "iso"].includes(ext)) {
+      return "archive";
+    }
+    if (["exe", "app", "pkg", "bat", "cmd", "msi", "apk", "deb", "rpm"].includes(ext)) {
+      return "executable";
+    }
+    if (["txt", "md", "log", "ini", "cfg", "conf"].includes(ext)) return "text";
+    return "file";
   }
 
   function getSecuritySummary(entry: FileEntry): SecuritySummary {
@@ -1052,6 +1102,38 @@
     }
   }
 </script>
+
+{#snippet entryIcon(kind: FileIconKind, large = false)}
+  <span class="entry-icon kind-{kind}" class:large aria-hidden="true">
+    {#if kind === "folder"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+    {:else if kind === "image"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+    {:else if kind === "video"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+    {:else if kind === "audio"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+    {:else if kind === "code"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
+    {:else if kind === "pdf"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm1 9c.55 0 1 .45 1 1v1h-1.5v-1.5H13V15h2v1h-3v-4h3zm-5.5 2.5c0 .83-.67 1.5-1.5 1.5H6v-6h2c.83 0 1.5.67 1.5 1.5v3zM8 11H7.5v2H8v-2zm6.5.5H16v2h-.5v-2z"/></svg>
+    {:else if kind === "document"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+    {:else if kind === "spreadsheet"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 7h2v2H7V7zm4 0h2v2h-2V7zm4 0h2v2h-2V7zM7 11h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2zM7 15h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z"/></svg>
+    {:else if kind === "presentation"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h6v2H8v2h8v-2h-3v-2h6c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 12H5V5h14v10z"/></svg>
+    {:else if kind === "archive"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 10h-2v-2h2v2zm0-3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg>
+    {:else if kind === "executable"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.41 8.41l-4.83-4.83c-.37-.37-.88-.58-1.41-.58H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V9.83c0-.53-.21-1.04-.59-1.42zM13 17h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+    {:else if kind === "text"}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM16 18H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+    {:else}
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
+    {/if}
+  </span>
+{/snippet}
 
 <div class="page" class:compact={hasSearched}>
   <!-- Menu Bar -->
@@ -1852,9 +1934,10 @@
                   class:selected={selectedFile?.path === entry.path}
                   onclick={() => selectFile(entry)}
                 >
-                  <span class="col-name" title={entry.filename}
-                    >{entry.filename}</span
-                  >
+                  <span class="col-name" title={entry.filename}>
+                    {@render entryIcon(getFileIconKind(entry))}
+                    <span class="name-text">{entry.filename}</span>
+                  </span>
                   <span class="col-size"
                     >{entry.is_directory ? "-" : formatSize(entry.size)}</span
                   >
@@ -1874,6 +1957,13 @@
             </div>
 
             <div class="drawer-body">
+              <div class="detail-icon-row">
+                {@render entryIcon(getFileIconKind(selectedFile), true)}
+                <div class="detail-icon-meta">
+                  <strong class="detail-filename">{selectedFile.filename}</strong>
+                  <span class="detail-filetype">{getFileType(selectedFile)}</span>
+                </div>
+              </div>
               <div class="info-group">
                 <div class="info-item">
                   <span>{t("fileName")}</span><strong>{selectedFile.filename}</strong>
@@ -3914,6 +4004,142 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .col-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .col-name .name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .entry-icon {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    background: #eef2f8;
+    color: #6b7a94;
+  }
+
+  .entry-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .entry-icon.large {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+  }
+
+  .entry-icon.large svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .entry-icon.kind-folder {
+    background: #fff4e0;
+    color: #e8a317;
+  }
+
+  .entry-icon.kind-image {
+    background: #e8f8ef;
+    color: #2e9b5a;
+  }
+
+  .entry-icon.kind-video {
+    background: #fdeef3;
+    color: #d23b6d;
+  }
+
+  .entry-icon.kind-audio {
+    background: #f3eefc;
+    color: #7a4fd3;
+  }
+
+  .entry-icon.kind-code {
+    background: #eaf2ff;
+    color: #3b6fd8;
+  }
+
+  .entry-icon.kind-pdf {
+    background: #fdecea;
+    color: #d6453d;
+  }
+
+  .entry-icon.kind-document {
+    background: #eaf2ff;
+    color: #2f6fed;
+  }
+
+  .entry-icon.kind-spreadsheet {
+    background: #e8f7ea;
+    color: #2f9e44;
+  }
+
+  .entry-icon.kind-presentation {
+    background: #fff0e6;
+    color: #e67a22;
+  }
+
+  .entry-icon.kind-archive {
+    background: #f5f0e8;
+    color: #9a7040;
+  }
+
+  .entry-icon.kind-executable {
+    background: #fdecea;
+    color: #c0392b;
+  }
+
+  .entry-icon.kind-text {
+    background: #eef2f8;
+    color: #5a6782;
+  }
+
+  .entry-icon.kind-file {
+    background: #eef2f8;
+    color: #6b7a94;
+  }
+
+  .detail-icon-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 0 14px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #ebf0fa;
+  }
+
+  .detail-icon-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .detail-filename {
+    font-size: 15px;
+    color: #1f2636;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .detail-filetype {
+    font-size: 12px;
+    color: #6b7a94;
   }
 
   .col-size,
