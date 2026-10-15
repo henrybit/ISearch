@@ -9,13 +9,13 @@ edition = "2021"
 rust-version = "1.77.2"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.10", features = [] }
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2", features = [] }
+tauri = { version = "2.10", features = [] }
 tauri-plugin-log = "2"
 
 # Storage (replacing SQLite with LMDB + FST)
@@ -60,4 +60,4 @@ pcap = "1.1"
 ahash = "0.8"
 
 # Dialog for directory picker
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = "2.7"
