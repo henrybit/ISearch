@@ -32,6 +32,11 @@
       "icons/icon.icns",
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "10.15",
+      "entitlements": "Entitlements.plist"
+    }
   }
 }

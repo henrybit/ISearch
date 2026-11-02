@@ -27,6 +27,8 @@ isearch 是一个基于 Rust 和 Tauri 2 的跨平台桌面应用，提供高性
 
 Download the latest release from [GitHub Releases](https://github.com/your-repo/isearch/releases).
 
+CI 会自动为 Windows / macOS / Linux 打包；macOS 签名与公证所需 Secrets 见 [docs/ci-release.md](docs/ci-release.md)。
+
 ### Build from source | 从源码构建
 
 ```bash
@@ -105,8 +107,14 @@ isearch/
 │           ├── clamav_scanner.rs
 │           └── watcher.rs
 ├── docs/                  # Documentation
+├── .github/workflows/     # CI: multi-platform build & release
 └── build.sh               # Build script
 ```
+
+## CI / Release
+
+Push tag `v*`（如 `v0.1.0`）会触发跨平台构建并生成 Draft Release。配置 Apple 证书与公证 Secrets 的步骤见 **[docs/ci-release.md](docs/ci-release.md)**。
+
 
 ## License | 许可证
 
