@@ -4,8 +4,8 @@
   "identifier": "com.isearch.app",
   "build": {
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "node scripts/fetch-clamav-db.js --optional && npm run dev",
+    "beforeBuildCommand": "node scripts/fetch-clamav-db.js && npm run build",
     "frontendDist": "../build"
   },
   "app": {
@@ -28,6 +28,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../clamav_db/": "clamav_db/"
+    },
     "icon": [
       "icons/icon.icns",
       "icons/icon.ico",

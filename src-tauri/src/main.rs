@@ -6,7 +6,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 mod core;
 mod models;
@@ -1568,6 +1568,10 @@ fn main() {
         .setup(move |app| {
             // Log app startup now that logger is set up
             info!("[app_startup] version={} - iSearch application starting", env!("CARGO_PKG_VERSION"));
+
+            if let Ok(dir) = app.path().resource_dir() {
+                core::clamav_scanner::set_resource_dir(dir);
+            }
             info!("[db_init] status=success - Database initialized");
 
             // Emit current index status on startup (don't auto-index)

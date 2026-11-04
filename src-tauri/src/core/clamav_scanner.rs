@@ -4,7 +4,7 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use tracing::{info, warn};
 
 /// ClamAV engine instance (singleton)
@@ -145,16 +145,30 @@ fn has_clamav_db(dir: &Path) -> bool {
     dir.join("main.cvd").exists() || dir.join("main.cld").exists()
 }
 
-/// Project-local `clamav_db` candidates (repo root in dev, beside the binary when packaged).
+/// Tauri resource directory, set once during app setup.
+static RESOURCE_DIR: OnceCell<std::path::PathBuf> = OnceCell::new();
+
+pub fn set_resource_dir(dir: std::path::PathBuf) {
+    let _ = RESOURCE_DIR.set(dir);
+}
+
+fn dev_project_clamav_db() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("clamav_db")
+}
+
+/// Project-local `clamav_db` candidates: bundled resources first, then the repo in dev builds.
 fn project_clamav_db_candidates() -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
 
-    // src-tauri/../clamav_db — preferred when running from this workspace
-    paths.push(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("clamav_db"),
-    );
+    if let Some(dir) = RESOURCE_DIR.get() {
+        paths.push(dir.join("clamav_db"));
+    }
+
+    if cfg!(debug_assertions) {
+        paths.push(dev_project_clamav_db());
+    }
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -227,13 +241,9 @@ fn get_clamav_db_path() -> String {
         }
     }
 
-    // 4. Nothing found: download into the project clamav_db when available, else user dir
-    if let Some(project) = project_clamav_db_candidates().into_iter().next() {
-        return project
-            .canonicalize()
-            .unwrap_or(project)
-            .to_string_lossy()
-            .to_string();
+    // 4. Nothing found: download into the repo clamav_db in dev, else the writable user dir
+    if cfg!(debug_assertions) {
+        return dev_project_clamav_db().to_string_lossy().to_string();
     }
     user_db_path
 }
@@ -372,10 +382,13 @@ pub fn init_clamav() -> Result<(), String> {
         download_all_clamav_dbs(&db_path)?;
         set_last_daily_update(&db_path)?;
     } else if needs_daily_update(&db_path) {
-        // Check for daily updates on first use each day
+        // Bundled databases live in a read-only location, so update failures must not block init.
         info!("[clamav] Checking for daily database updates...");
-        download_single_db(&db_path, "daily.cvd", "https://database.clamav.net/daily.cvd")?;
-        set_last_daily_update(&db_path)?;
+        if let Err(e) = download_single_db(&db_path, "daily.cvd", "https://database.clamav.net/daily.cvd")
+            .and_then(|_| set_last_daily_update(&db_path))
+        {
+            warn!("[clamav] Daily update skipped: {}", e);
+        }
     }
 
     match ClamAvContext::new() {

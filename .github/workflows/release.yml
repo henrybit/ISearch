@@ -14,7 +14,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  clamav-db:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute cache week
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      # Avoid hammering database.clamav.net (it rate-limits CI IPs): reuse this week's download.
+      - name: Restore ClamAV database cache
+        uses: actions/cache@v4
+        with:
+          path: clamav_db
+          key: clamav-db-${{ steps.week.outputs.week }}
+          restore-keys: clamav-db-
+
+      - name: Download ClamAV database with freshclam
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y clamav-freshclam
+          sudo systemctl stop clamav-freshclam || true
+
+          mkdir -p clamav_db
+          cat > freshclam.conf <<EOF
+          DatabaseDirectory $PWD/clamav_db
+          DatabaseMirror database.clamav.net
+          Foreground yes
+          EOF
+
+          if ! freshclam --config-file=freshclam.conf --stdout; then
+            if [ -f clamav_db/main.cvd ] || [ -f clamav_db/main.cld ]; then
+              echo "::warning::freshclam failed; using cached database"
+            else
+              echo "::error::freshclam failed and no cached database is available"
+              exit 1
+            fi
+          fi
+          ls -lh clamav_db
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clamav-db
+          path: |
+            clamav_db/*.cvd
+            clamav_db/*.cld
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
+    needs: clamav-db
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +89,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: clamav-db
+          path: clamav_db
 
       - uses: actions/setup-node@v4
         with:

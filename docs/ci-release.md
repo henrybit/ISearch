@@ -93,6 +93,14 @@ spctl --assess --type execute -vv /path/to/ISearch.app
 
 首次 Windows 构建会较慢（编译 ClamAV），之后靠 cache 加速。
 
+## ClamAV 病毒库
+
+病毒库（`.cvd`）与平台无关，不再提交到仓库（`clamav_db/` 已加入 `.gitignore`）。
+
+- **打包**：`tauri.conf.json` 把仓库根目录的 `clamav_db/` 作为资源打进安装包。`beforeBuildCommand` 会先运行 `scripts/fetch-clamav-db.js`：病毒库不全时优先用本机的 `freshclam`，没有则直接从 database.clamav.net 下载 `main` / `daily` / `bytecode.cvd`；下载失败则打包失败。`tauri dev` 下同样会尝试下载，但失败只告警。
+- **CI**：`clamav-db` job 在 Ubuntu 上用 `freshclam` 下载病毒库，按周缓存（官方会对 CI IP 限流），作为 artifact 分发给各平台 job；打包时脚本检测到已存在就跳过下载。
+- **运行时查找顺序**：安装包资源目录 `clamav_db` → （仅 debug 构建）仓库根目录 `clamav_db` → `~/.isearch/clamav_db` → 系统 ClamAV 目录；都没有时自动下载到 `~/.isearch/clamav_db`。
+
 ## 产物位置
 
 GitHub Releases 页面附件（含分平台下载链接）。

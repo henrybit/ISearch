@@ -3,6 +3,9 @@ node_modules
 # Track lockfile even if a global gitignore excludes it
 !package-lock.json
 
+# ClamAV virus database (downloaded by freshclam in CI, see docs/ci-release.md)
+/clamav_db/
+
 # Output
 .output
 .vercel
