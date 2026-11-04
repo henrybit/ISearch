@@ -1,20 +1,10 @@
 name: Release
 
+# Push a version tag (e.g. v0.1.0) to build all platforms and publish a GitHub Release.
 on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch:
-    inputs:
-      platform:
-        description: 要打包的平台
-        type: choice
-        options:
-          - all
-          - linux
-          - macos
-          - windows
-        default: all
 
 permissions:
   contents: write
@@ -24,38 +14,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  select:
-    runs-on: ubuntu-latest
-    outputs:
-      include: ${{ steps.set.outputs.include }}
-    steps:
-      - id: set
-        env:
-          PLATFORM: ${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'all' }}
-        run: |
-          set -eu
-          case "$PLATFORM" in
-            linux)
-              include='[{"platform":"ubuntu-22.04","rust_targets":"x86_64-unknown-linux-gnu","args":"--target x86_64-unknown-linux-gnu --bundles deb,appimage","artifact":"linux-x86_64"}]'
-              ;;
-            macos)
-              include='[{"platform":"macos-latest","rust_targets":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin --bundles dmg","artifact":"macos-aarch64"},{"platform":"macos-latest","rust_targets":"x86_64-apple-darwin","args":"--target x86_64-apple-darwin --bundles dmg","artifact":"macos-x86_64"}]'
-              ;;
-            windows)
-              include='[{"platform":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","args":"--target x86_64-pc-windows-msvc --bundles nsis","artifact":"windows-x86_64"}]'
-              ;;
-            *)
-              include='[{"platform":"macos-latest","rust_targets":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin --bundles dmg","artifact":"macos-aarch64"},{"platform":"macos-latest","rust_targets":"x86_64-apple-darwin","args":"--target x86_64-apple-darwin --bundles dmg","artifact":"macos-x86_64"},{"platform":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","args":"--target x86_64-pc-windows-msvc --bundles nsis","artifact":"windows-x86_64"},{"platform":"ubuntu-22.04","rust_targets":"x86_64-unknown-linux-gnu","args":"--target x86_64-unknown-linux-gnu --bundles deb,appimage","artifact":"linux-x86_64"}]'
-              ;;
-          esac
-          echo "include=$include" >> "$GITHUB_OUTPUT"
-
   publish:
-    needs: select
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.select.outputs.include) }}
+        include:
+          - platform: macos-latest
+            rust_targets: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles dmg
+            artifact: macos-aarch64
+          - platform: macos-latest
+            rust_targets: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles dmg
+            artifact: macos-x86_64
+          - platform: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc --bundles nsis
+            artifact: windows-x86_64
+          - platform: ubuntu-22.04
+            rust_targets: x86_64-unknown-linux-gnu
+            args: --target x86_64-unknown-linux-gnu --bundles deb,appimage
+            artifact: linux-x86_64
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 120
 
