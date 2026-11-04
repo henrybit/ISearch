@@ -1,10 +1,10 @@
 name: Release
 
-# Push a version tag (e.g. v0.1.0) to build all platforms and publish a GitHub Release.
+# Push any tag to build all platforms and publish a GitHub Release.
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - '*'
 
 permissions:
   contents: write
@@ -185,8 +185,8 @@ jobs:
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
           API_PRIVATE_KEYS_DIR: ${{ env.API_PRIVATE_KEYS_DIR }}
         with:
-          tagName: v__VERSION__
-          releaseName: ISearch v__VERSION__
+          tagName: ${{ github.ref_name }}
+          releaseName: ISearch ${{ github.ref_name }}
           releaseBody: |
             安装包正在上传。全部平台完成后会补上下载地址。
           releaseDraft: false
@@ -207,25 +207,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -eu
           version=$(node -p "require('./package.json').version")
-          tag="v${version}"
           notes=$(mktemp)
 
           {
-            echo "# ISearch ${version}"
+            echo "# ISearch ${TAG}"
             echo
             echo "跨平台本地文件搜索工具。"
             echo
             echo "## 下载"
             echo
-            names=$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name' || true)
+            names=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' || true)
             if [ -z "$names" ]; then
               echo "安装包尚未上传成功，请查看 Actions 日志。"
             else
               echo "$names" | while IFS= read -r name; do
-                url="https://github.com/${REPO}/releases/download/${tag}/${name}"
+                url="https://github.com/${REPO}/releases/download/${TAG}/${name}"
                 label="$name"
                 case "$name" in
                   *aarch64*.dmg) label="macOS Apple Silicon（.dmg）" ;;
@@ -250,5 +250,5 @@ jobs:
             fi
           } > "$notes"
 
-          gh release edit "$tag" --repo "$REPO" --title "ISearch v${version}" --notes-file "$notes"
-          echo "Updated https://github.com/${REPO}/releases/tag/${tag}"
+          gh release edit "$TAG" --repo "$REPO" --title "ISearch ${TAG}" --notes-file "$notes"
+          echo "Updated https://github.com/${REPO}/releases/tag/${TAG}"

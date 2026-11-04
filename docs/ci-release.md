@@ -4,7 +4,7 @@
 
 | Workflow | 文件 | 用途 |
 |----------|------|------|
-| **Release** | [`.github/workflows/release.yml`](../.github/workflows/release.yml) | 推送 version tag 后打包并发布 GitHub Release |
+| **Release** | [`.github/workflows/release.yml`](../.github/workflows/release.yml) | 推送任意 tag 后打包并发布 GitHub Release |
 
 | 平台 | Runner | 产物 |
 |------|--------|------|
@@ -15,14 +15,14 @@
 
 ## 触发方式
 
-推送符合 `v*.*.*` 的 tag（例如 `v0.1.0`）时自动全平台打包并发布 Release。
+推送任意 tag 时自动全平台打包并发布 Release（Release 名称与附件挂到该 tag 上）。
 
-发布示例（请先把 `package.json` 与 `src-tauri/tauri.conf.json` 的 version 改成一致）：
+发布示例（建议先把 `package.json` 与 `src-tauri/tauri.conf.json` 的 version 改成一致）：
 
 ```bash
-# 例如 version = 0.1.0
-git tag v0.1.0
-git push origin v0.1.0
+git tag 0.1.0
+# 或: git tag v0.1.0
+git push origin 0.1.0
 ```
 
 发版完成后，`notes` job 会把 Release 说明改成带下载链接的列表。

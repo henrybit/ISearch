@@ -113,7 +113,7 @@ isearch/
 
 ## CI / Release
 
-- **Release**：push tag `v*.*.*`（如 `v0.1.0`）时自动打包 Windows / Linux / macOS 并发布 GitHub Release
+- **Release**：push 任意 tag 时自动打包 Windows / Linux / macOS 并发布 GitHub Release
 
 配置 Apple 证书与公证 Secrets 的步骤见 **[docs/ci-release.md](docs/ci-release.md)**。
 
