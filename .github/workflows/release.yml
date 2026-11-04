@@ -185,6 +185,9 @@ jobs:
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
           API_PRIVATE_KEYS_DIR: ${{ env.API_PRIVATE_KEYS_DIR }}
         with:
+          # Bypass package.json "tauri" script (scripts/tauri-build.js), which
+          # ignores --target/--bundles from this action.
+          tauriScript: npx @tauri-apps/cli
           tagName: ${{ github.ref_name }}
           releaseName: ISearch ${{ github.ref_name }}
           releaseBody: |
