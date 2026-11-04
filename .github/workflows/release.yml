@@ -35,15 +35,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clamav-freshclam
           sudo systemctl stop clamav-freshclam || true
+          # Ubuntu's AppArmor profile confines freshclam to /etc/clamav and /var/lib/clamav,
+          # which blocks reading our config and writing into the workspace.
+          if [ -f /etc/apparmor.d/usr.bin.freshclam ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/usr.bin.freshclam || true
+          fi
 
           mkdir -p clamav_db
-          cat > freshclam.conf <<EOF
+          cat > "$RUNNER_TEMP/freshclam.conf" <<EOF
           DatabaseDirectory $PWD/clamav_db
           DatabaseMirror database.clamav.net
           Foreground yes
           EOF
 
-          if ! freshclam --config-file=freshclam.conf --stdout; then
+          if ! freshclam --config-file="$RUNNER_TEMP/freshclam.conf" --stdout; then
             if [ -f clamav_db/main.cvd ] || [ -f clamav_db/main.cld ]; then
               echo "::warning::freshclam failed; using cached database"
             else
