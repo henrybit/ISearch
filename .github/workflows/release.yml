@@ -173,11 +173,15 @@ jobs:
           exit "$missing"
 
       - name: Prepare Apple API key (macOS notarization)
-        if: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
+          if [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_KEY_P8" ]; then
+            echo "APPLE_API_KEY / APPLE_API_KEY_P8 not set; skipping API key prep (Apple ID notarization may still work)"
+            exit 0
+          fi
           mkdir -p "$HOME/private_keys"
           KEY_PATH="$HOME/private_keys/AuthKey_${APPLE_API_KEY}.p8"
           if echo "$APPLE_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
