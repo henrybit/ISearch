@@ -1,0 +1,27 @@
+node_modules
+
+# Track lockfile even if a global gitignore excludes it
+!package-lock.json
+
+# Output
+.output
+.vercel
+.netlify
+.playwright-mcp
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
