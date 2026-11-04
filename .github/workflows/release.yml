@@ -78,8 +78,18 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: |
           brew update
-          brew install clamav pkg-config || true
-          brew list libpcap >/dev/null 2>&1 || brew install libpcap || true
+          brew install clamav pkg-config openssl@3 libpcap
+          # Homebrew openssl is keg-only; clamav.h includes <openssl/ssl.h> for bindgen.
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          BREW_PREFIX="$(brew --prefix)"
+          {
+            echo "OPENSSL_DIR=${OPENSSL_PREFIX}"
+            echo "OPENSSL_ROOT_DIR=${OPENSSL_PREFIX}"
+            echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig:${BREW_PREFIX}/lib/pkgconfig"
+            echo "CPATH=${OPENSSL_PREFIX}/include:${BREW_PREFIX}/include"
+            echo "LIBRARY_PATH=${OPENSSL_PREFIX}/lib:${BREW_PREFIX}/lib"
+            echo "BINDGEN_EXTRA_CLANG_ARGS=-I${OPENSSL_PREFIX}/include"
+          } >> "$GITHUB_ENV"
 
       - name: Install Windows system dependencies
         if: matrix.platform == 'windows-latest'
