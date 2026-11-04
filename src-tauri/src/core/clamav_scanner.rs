@@ -141,34 +141,77 @@ fn strlen(s: *const std::os::raw::c_char) -> usize {
     len
 }
 
+fn has_clamav_db(dir: &Path) -> bool {
+    dir.join("main.cvd").exists() || dir.join("main.cld").exists()
+}
+
+/// Project-local `clamav_db` candidates (repo root in dev, beside the binary when packaged).
+fn project_clamav_db_candidates() -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+
+    // src-tauri/../clamav_db — preferred when running from this workspace
+    paths.push(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("clamav_db"),
+    );
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            paths.push(dir.join("clamav_db"));
+            // macOS .app: Contents/MacOS -> Contents/Resources/clamav_db
+            paths.push(dir.join("../Resources/clamav_db"));
+            // cargo run from target/{debug,release}
+            paths.push(dir.join("../../clamav_db"));
+            paths.push(dir.join("../../../clamav_db"));
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        paths.push(cwd.join("clamav_db"));
+    }
+
+    paths
+}
+
 fn get_clamav_db_path() -> String {
-    // User-local database path (cross-platform, highest priority)
+    // 1. Prefer the project's bundled/local clamav_db
+    for path in project_clamav_db_candidates() {
+        if has_clamav_db(&path) {
+            return path
+                .canonicalize()
+                .unwrap_or(path)
+                .to_string_lossy()
+                .to_string();
+        }
+    }
+
+    // 2. User-local database
     let user_db_path = dirs::home_dir()
         .map(|h| h.join(".isearch").join("clamav_db"))
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "/tmp/clamav_db".to_string());
-    if Path::new(&format!("{}/main.cvd", user_db_path)).exists()
-        || Path::new(&format!("{}/main.cld", user_db_path)).exists()
-    {
-        return user_db_path.to_string();
+    if has_clamav_db(Path::new(&user_db_path)) {
+        return user_db_path;
     }
 
+    // 3. System ClamAV installs
     #[cfg(target_os = "macos")]
-    let system_paths = vec![
+    let system_paths = [
         "/opt/homebrew/share/clamav", // macOS ARM (Apple Silicon)
-        "/usr/local/share/clamav",     // macOS Intel / Linux
-        "/opt/local/share/clamav",     // macOS
+        "/usr/local/share/clamav",    // macOS Intel
+        "/opt/local/share/clamav",
     ];
 
     #[cfg(target_os = "linux")]
-    let system_paths = vec![
+    let system_paths = [
         "/usr/local/share/clamav",
         "/usr/share/clamav",
         "/var/lib/clamav",
     ];
 
     #[cfg(target_os = "windows")]
-    let system_paths = vec![
+    let system_paths = [
         "C:\\Program Files\\ClamAV\\",
         "C:\\ProgramData\\ClamAV\\",
         "C:\\clamav\\",
@@ -176,17 +219,23 @@ fn get_clamav_db_path() -> String {
     ];
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    let system_paths: Vec<&str> = Vec::new();
+    let system_paths: [&str; 0] = [];
 
     for path in &system_paths {
-        let db_path = format!("{}/main.cvd", path);
-        let db_path_alt = format!("{}/main.cld", path);
-        if Path::new(&db_path).exists() || Path::new(&db_path_alt).exists() {
+        if has_clamav_db(Path::new(path)) {
             return path.to_string();
         }
     }
 
-    user_db_path.to_string()
+    // 4. Nothing found: download into the project clamav_db when available, else user dir
+    if let Some(project) = project_clamav_db_candidates().into_iter().next() {
+        return project
+            .canonicalize()
+            .unwrap_or(project)
+            .to_string_lossy()
+            .to_string();
+    }
+    user_db_path
 }
 
 /// Download a single ClamAV database file
