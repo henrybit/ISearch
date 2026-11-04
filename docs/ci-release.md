@@ -1,39 +1,53 @@
 # CI / Release 构建说明
 
-本仓库通过 [`.github/workflows/build.yml`](../.github/workflows/build.yml) 在 GitHub Actions 上编译并打包：
+本仓库有两套 GitHub Actions：
+
+| Workflow | 文件 | 用途 |
+|----------|------|------|
+| **Build** | [`.github/workflows/build.yml`](../.github/workflows/build.yml) | PR / push 验证构建，上传 Artifacts |
+| **Release** | [`.github/workflows/release.yml`](../.github/workflows/release.yml) | 打 tag 或手动触发，打包并发布 GitHub Release |
 
 | 平台 | Runner | 产物 |
 |------|--------|------|
-| macOS Apple Silicon | `macos-latest` | `.dmg` / `.app.zip`（`aarch64-apple-darwin`） |
-| macOS Intel | `macos-latest` | `.dmg` / `.app.zip`（`x86_64-apple-darwin`） |
+| macOS Apple Silicon | `macos-latest` | `.dmg`（`aarch64-apple-darwin`） |
+| macOS Intel | `macos-latest` | `.dmg`（`x86_64-apple-darwin`） |
 | Linux x86_64 | `ubuntu-22.04` | `.AppImage` / `.deb` |
 | Windows x86_64 | `windows-latest` | NSIS `.exe` |
 
 ## 触发方式
 
+### CI（Build）
+
 - **Push** 到 `main` / `master`：构建并上传 Artifacts
 - **Pull Request**：同上（fork PR 无法读取 secrets，macOS 为未签名包）
-- **Tag** `v*`（例如 `v0.1.0`）：构建并创建 **Draft Release**
 - **workflow_dispatch**：手动触发构建
 
-发布示例：
+### 发版（Release）
+
+- **Tag** `v*.*.*`（例如 `v0.1.0`）：全平台打包并发布 Release
+- **workflow_dispatch**：可选手动打包 `all` / `linux` / `macos` / `windows`
+
+发布示例（请先把 `package.json` 与 `src-tauri/tauri.conf.json` 的 version 改成一致）：
 
 ```bash
+# 例如 version = 0.1.0
 git tag v0.1.0
 git push origin v0.1.0
 ```
+
+发版完成后，`notes` job 会把 Release 说明改成带下载链接的列表。
 
 ## 需要配置的 GitHub Secrets
 
 路径：仓库 → **Settings → Secrets and variables → Actions → New repository secret**
 
-### macOS 代码签名（必需，用于分发）
+### macOS 代码签名（Release 必需）
 
 | Secret | 说明 |
 |--------|------|
 | `APPLE_CERTIFICATE` | Developer ID Application 证书导出的 `.p12`，再做 **base64** |
 | `APPLE_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设置的密码 |
-| `KEYCHAIN_PASSWORD` | CI 临时钥匙串密码（任意强密码；可省略，workflow 会自动生成） |
+| `KEYCHAIN_PASSWORD` | CI 临时钥匙串密码（任意强密码；可省略，Build workflow 会自动生成） |
 
 导出与编码：
 
@@ -45,7 +59,7 @@ openssl base64 -A -in MyCert.p12 -out certificate-base64.txt
 
 分发到 Mac App Store **之外** 请使用 **Developer ID Application** 证书，并开启 Hardened Runtime（已在 `tauri.conf.json` 中配置）。
 
-### macOS 公证（Notarization，强烈建议）
+### macOS 公证（Notarization，Release 必需）
 
 任选 **一种** 鉴权方式。
 
@@ -68,7 +82,7 @@ openssl base64 -A -in MyCert.p12 -out certificate-base64.txt
 | `APPLE_PASSWORD` | [App-Specific Password](https://appleid.apple.com/) |
 | `APPLE_TEAM_ID` | Team ID |
 
-未配置公证相关 secrets 时：仍会签名（若有证书），但跳过 notarization，用户首次打开可能提示无法验证开发者。
+未配置公证相关 secrets 时：Build 仍可出包（可能未签名）；Release 的 macOS job 会直接失败。
 
 ## 本地验证签名（可选）
 
@@ -92,5 +106,5 @@ spctl --assess --type execute -vv /path/to/ISearch.app
 
 ## 产物位置
 
-- Actions 页面 → 对应 run → **Artifacts**
-- Tag 构建：Draft Release 附件（需在 GitHub Releases 页面手动 Publish）
+- **Build**：Actions 页面 → 对应 run → **Artifacts**
+- **Release**：GitHub Releases 页面附件（含分平台下载链接）

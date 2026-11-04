@@ -1,13 +1,12 @@
 name: Build
 
-# Cross-platform build for ISearch (Tauri 2).
-# - pull_request / push: compile & package artifacts (macOS signs only if Apple secrets exist)
-# - tag v*: draft GitHub Release with installers attached
+# Cross-platform CI build for ISearch (Tauri 2).
+# - pull_request / push / workflow_dispatch: compile & upload Artifacts
+# - Official releases: see .github/workflows/release.yml (tag v*.*.* / manual)
 
 on:
   push:
     branches: [main, master]
-    tags: ['v*']
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -184,8 +183,7 @@ jobs:
           echo "Imported signing identity: $IDENTITY"
           rm -f "$CERT_PATH"
 
-      - name: Build Tauri app (no release)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -200,35 +198,6 @@ jobs:
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
           API_PRIVATE_KEYS_DIR: ${{ env.API_PRIVATE_KEYS_DIR }}
         with:
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-
-      - name: Build Tauri app (draft release)
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
-          API_PRIVATE_KEYS_DIR: ${{ env.API_PRIVATE_KEYS_DIR }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: ISearch ${{ github.ref_name }}
-          releaseBody: |
-            ## Downloads
-            Installers for macOS (Apple Silicon / Intel), Windows, and Linux are attached.
-
-            ## Notes
-            - macOS builds are signed and notarized when Apple secrets are configured.
-            - See `docs/ci-release.md` for secret setup.
-          releaseDraft: true
-          prerelease: false
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Collect build artifacts

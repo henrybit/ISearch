@@ -1,0 +1,271 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 要打包的平台
+        type: choice
+        options:
+          - all
+          - linux
+          - macos
+          - windows
+        default: all
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.set.outputs.include }}
+    steps:
+      - id: set
+        env:
+          PLATFORM: ${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'all' }}
+        run: |
+          set -eu
+          case "$PLATFORM" in
+            linux)
+              include='[{"platform":"ubuntu-22.04","rust_targets":"x86_64-unknown-linux-gnu","args":"--target x86_64-unknown-linux-gnu --bundles deb,appimage","artifact":"linux-x86_64"}]'
+              ;;
+            macos)
+              include='[{"platform":"macos-latest","rust_targets":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin --bundles dmg","artifact":"macos-aarch64"},{"platform":"macos-latest","rust_targets":"x86_64-apple-darwin","args":"--target x86_64-apple-darwin --bundles dmg","artifact":"macos-x86_64"}]'
+              ;;
+            windows)
+              include='[{"platform":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","args":"--target x86_64-pc-windows-msvc --bundles nsis","artifact":"windows-x86_64"}]'
+              ;;
+            *)
+              include='[{"platform":"macos-latest","rust_targets":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin --bundles dmg","artifact":"macos-aarch64"},{"platform":"macos-latest","rust_targets":"x86_64-apple-darwin","args":"--target x86_64-apple-darwin --bundles dmg","artifact":"macos-x86_64"},{"platform":"windows-latest","rust_targets":"x86_64-pc-windows-msvc","args":"--target x86_64-pc-windows-msvc --bundles nsis","artifact":"windows-x86_64"},{"platform":"ubuntu-22.04","rust_targets":"x86_64-unknown-linux-gnu","args":"--target x86_64-unknown-linux-gnu --bundles deb,appimage","artifact":"linux-x86_64"}]'
+              ;;
+          esac
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: select
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.select.outputs.include) }}
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          shared-key: release-${{ matrix.artifact }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            pkg-config \
+            libpcap-dev \
+            libclamav-dev \
+            clamav
+
+      - name: Install macOS system dependencies
+        if: matrix.platform == 'macos-latest'
+        run: |
+          brew update
+          brew install clamav pkg-config || true
+          brew list libpcap >/dev/null 2>&1 || brew install libpcap || true
+
+      - name: Install Windows system dependencies
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install llvm wixtoolset -y --no-progress
+
+          # Npcap SDK headers/libs for the `pcap` crate
+          $npcap = "npcap-sdk-1.13.zip"
+          Invoke-WebRequest -Uri "https://npcap.com/dist/$npcap" -OutFile $npcap
+          Expand-Archive -Path $npcap -DestinationPath "$env:GITHUB_WORKSPACE\npcap-sdk" -Force
+          "LIB=$env:GITHUB_WORKSPACE\npcap-sdk\Lib\x64;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Cache vcpkg (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/vcpkg/installed
+            ${{ github.workspace }}/vcpkg/packages
+          key: vcpkg-clamav-${{ runner.os }}-${{ hashFiles('.github/workflows/release.yml') }}
+
+      - name: Install ClamAV via vcpkg (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
+          if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgRoot
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          }
+          & "$vcpkgRoot\vcpkg.exe" install clamav:x64-windows --clean-after-build
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKGRS_DYNAMIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $bin = Join-Path $vcpkgRoot "installed\x64-windows\bin"
+          "PATH=$bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check Apple signing secrets
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          missing=0
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Missing GitHub secret: $name"
+              missing=1
+            fi
+          done
+          # Notarization: App Store Connect API Key 或 Apple ID + App-Specific Password 二选一
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ] && [ -n "$APPLE_API_KEY_P8" ]; then
+            echo "Using App Store Connect API Key for notarization"
+          elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ]; then
+            echo "Using Apple ID for notarization"
+          else
+            echo "Missing notarization secrets: set APPLE_API_KEY+APPLE_API_ISSUER+APPLE_API_KEY_P8, or APPLE_ID+APPLE_PASSWORD"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Prepare Apple API key (macOS notarization)
+        if: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          mkdir -p "$HOME/private_keys"
+          KEY_PATH="$HOME/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          if echo "$APPLE_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+          else
+            echo "$APPLE_API_KEY_P8" | base64 --decode > "$KEY_PATH"
+          fi
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+          echo "API_PRIVATE_KEYS_DIR=$HOME/private_keys" >> "$GITHUB_ENV"
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+          API_PRIVATE_KEYS_DIR: ${{ env.API_PRIVATE_KEYS_DIR }}
+        with:
+          tagName: v__VERSION__
+          releaseName: ISearch v__VERSION__
+          releaseBody: |
+            安装包正在上传。全部平台完成后会补上下载地址。
+          releaseDraft: false
+          prerelease: false
+          uploadUpdaterJson: false
+          args: ${{ matrix.args }}
+
+  notes:
+    needs: publish
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write release notes with download links
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          version=$(node -p "require('./package.json').version")
+          tag="v${version}"
+          notes=$(mktemp)
+
+          {
+            echo "# ISearch ${version}"
+            echo
+            echo "跨平台本地文件搜索工具。"
+            echo
+            echo "## 下载"
+            echo
+            names=$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name' || true)
+            if [ -z "$names" ]; then
+              echo "安装包尚未上传成功，请查看 Actions 日志。"
+            else
+              echo "$names" | while IFS= read -r name; do
+                url="https://github.com/${REPO}/releases/download/${tag}/${name}"
+                label="$name"
+                case "$name" in
+                  *aarch64*.dmg) label="macOS Apple Silicon（.dmg）" ;;
+                  *x64*.dmg|*x86_64*.dmg) label="macOS Intel（.dmg）" ;;
+                  *.dmg) label="macOS（.dmg）" ;;
+                  *.msi) label="Windows（.msi）" ;;
+                  *setup*.exe|*-setup.exe) label="Windows（NSIS）" ;;
+                  *.exe) label="Windows（.exe）" ;;
+                  *.deb) label="Linux（.deb）" ;;
+                  *.AppImage) label="Linux（.AppImage）" ;;
+                esac
+                echo "- [${label}](${url})"
+              done
+            fi
+            echo
+            echo "macOS 安装包在配置 Apple secrets 后会签名并公证。Windows 若被 SmartScreen 拦截，选择仍要运行。Linux 提供 .deb 与 .AppImage。"
+            echo
+            if [ -f "Features/Feature-${version}.md" ]; then
+              echo "## 本版更新"
+              echo
+              cat "Features/Feature-${version}.md"
+            fi
+          } > "$notes"
+
+          gh release edit "$tag" --repo "$REPO" --title "ISearch v${version}" --notes-file "$notes"
+          echo "Updated https://github.com/${REPO}/releases/tag/${tag}"
