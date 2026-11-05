@@ -74,7 +74,7 @@ impl ClamAvContext {
     fn scan_file(&self, path: &str) -> Result<ScanResult, String> {
         let c_path = CString::new(path.as_bytes()).map_err(|e| e.to_string())?;
         unsafe {
-            let mut scanned: u64 = 0;
+            let mut scanned: std::os::raw::c_ulong = 0;
             let mut virname: *const std::os::raw::c_char = std::ptr::null();
             let mut scan_opts: clamav_sys::cl_scan_options = std::mem::zeroed();
             scan_opts.parse = clamav_sys::CL_SCAN_PARSE_ARCHIVE
@@ -460,7 +460,7 @@ pub fn scan_files(paths: &[String]) -> Vec<ScanResult> {
             continue;
         };
         unsafe {
-            let mut scanned: u64 = 0;
+            let mut scanned: std::os::raw::c_ulong = 0;
             let mut virname: *const std::os::raw::c_char = std::ptr::null();
             let mut scan_opts: clamav_sys::cl_scan_options = std::mem::zeroed();
             scan_opts.parse = clamav_sys::CL_SCAN_PARSE_ARCHIVE
