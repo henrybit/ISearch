@@ -88,7 +88,7 @@ spctl --assess --type execute -vv /path/to/ISearch.app
 应用链接了 **ClamAV** 与 **libpcap**，CI 中会安装：
 
 - **Linux**：`libclamav-dev`、`libpcap-dev`、WebKitGTK 等
-- **macOS**：Homebrew `clamav`
+- **macOS**：Homebrew `clamav` / `openssl@3`。`scripts/macos-vendor-dylibs.sh` 会把 libclamav 及其非系统依赖复制到 `src-tauri/macos-libs/`、改为 `@rpath` 引用，并生成 `src-tauri/tauri.macos-libs.conf.json`，打包时放进 `ISearch.app/Contents/Frameworks` 并一起签名，用户无需安装 Homebrew。本地 `npm run tauri` 会自动执行该脚本。x86_64 包在 Intel 机器 `macos-15-intel` 上原生构建（Homebrew 在 arm64 机器上只有 arm64 库；GitHub 的 Intel macOS 机器提供到 2027 年 8 月）。
 - **Windows**：vcpkg `clamav:x64-windows` + Npcap SDK + LLVM（bindgen）
 
 首次 Windows 构建会较慢（编译 ClamAV），之后靠 cache 加速。

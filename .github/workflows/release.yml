@@ -75,11 +75,12 @@ jobs:
         include:
           - platform: macos-latest
             rust_targets: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin --bundles dmg
+            args: --target aarch64-apple-darwin --bundles dmg --config src-tauri/tauri.macos-libs.conf.json
             artifact: macos-aarch64
-          - platform: macos-latest
+          # Native Intel runner: Homebrew on arm64 only provides arm64 libclamav.
+          - platform: macos-15-intel
             rust_targets: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin --bundles dmg
+            args: --target x86_64-apple-darwin --bundles dmg --config src-tauri/tauri.macos-libs.conf.json
             artifact: macos-x86_64
           - platform: windows-latest
             rust_targets: x86_64-pc-windows-msvc
@@ -134,21 +135,14 @@ jobs:
             clamav
 
       - name: Install macOS system dependencies
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos')
         run: |
           brew update
           brew install clamav pkg-config openssl@3 libpcap
-          # Homebrew openssl is keg-only; clamav.h includes <openssl/ssl.h> for bindgen.
-          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
-          BREW_PREFIX="$(brew --prefix)"
-          {
-            echo "OPENSSL_DIR=${OPENSSL_PREFIX}"
-            echo "OPENSSL_ROOT_DIR=${OPENSSL_PREFIX}"
-            echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig:${BREW_PREFIX}/lib/pkgconfig"
-            echo "CPATH=${OPENSSL_PREFIX}/include:${BREW_PREFIX}/include"
-            echo "LIBRARY_PATH=${OPENSSL_PREFIX}/lib:${BREW_PREFIX}/lib"
-            echo "BINDGEN_EXTRA_CLANG_ARGS=-I${OPENSSL_PREFIX}/include"
-          } >> "$GITHUB_ENV"
+          # Copy libclamav + deps into src-tauri/macos-libs with @rpath install names so they
+          # ship inside the .app; env points clamav-sys at these copies (and OpenSSL headers).
+          bash scripts/macos-vendor-dylibs.sh
+          cat src-tauri/macos-libs/env >> "$GITHUB_ENV"
 
       - name: Install Windows system dependencies
         if: matrix.platform == 'windows-latest'
@@ -191,7 +185,7 @@ jobs:
         run: npm ci
 
       - name: Check Apple signing secrets
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos')
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -221,7 +215,7 @@ jobs:
           exit "$missing"
 
       - name: Prepare Apple API key (macOS notarization)
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos')
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
