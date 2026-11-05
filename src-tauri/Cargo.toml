@@ -53,7 +53,7 @@ regex = "1.10"
 notify = "6.1"
 
 # ClamAV antivirus scanning
-clamav-sys = "1.0"
+clamav-sys = "1.5"
 
 # Network traffic monitoring
 etherparse = "0.15"

@@ -486,9 +486,9 @@ dependencies = [
 
 [[package]]
 name = "clamav-sys"
-version = "1.0.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "912525d3dd4bf9e1dd277cc77df3ee74b245a51c3068ce2a2b4a7203c4cefce7"
+checksum = "f29b0503e833de9bd31391a1c93c98dada656fcdbfe13567e5e56d64225044a1"
 dependencies = [
  "bindgen",
  "pkg-config",
@@ -4468,7 +4468,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.18",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.2.0+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",

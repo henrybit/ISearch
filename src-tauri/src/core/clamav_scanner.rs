@@ -2,6 +2,7 @@
 //!
 //! Uses clamav-sys crate to directly call libclamav for file scanning.
 
+use std::ffi::CString;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use once_cell::sync::{Lazy, OnceCell};
@@ -31,6 +32,7 @@ impl ClamAvContext {
                 db_path
             ));
         }
+        let c_db_path = CString::new(db_path.as_bytes()).map_err(|e| e.to_string())?;
 
         unsafe {
             let engine = clamav_sys::cl_engine_new();
@@ -40,7 +42,7 @@ impl ClamAvContext {
 
             let mut signo: u32 = 0;
             let db_ret = clamav_sys::cl_load(
-                db_path.as_ptr() as *const std::os::raw::c_char,
+                c_db_path.as_ptr(),
                 engine,
                 &mut signo,
                 clamav_sys::CL_DB_STDOPT,
@@ -70,6 +72,7 @@ impl ClamAvContext {
 
     /// Scan a single file with mutex protection
     fn scan_file(&self, path: &str) -> Result<ScanResult, String> {
+        let c_path = CString::new(path.as_bytes()).map_err(|e| e.to_string())?;
         unsafe {
             let mut scanned: u64 = 0;
             let mut virname: *const std::os::raw::c_char = std::ptr::null();
@@ -84,9 +87,8 @@ impl ClamAvContext {
                 | clamav_sys::CL_SCAN_PARSE_ELF
                 | clamav_sys::CL_SCAN_PARSE_XMLDOCS;
 
-            let path_ptr = path.as_ptr() as *const std::os::raw::c_char;
             let ret = clamav_sys::cl_scanfile(
-                path_ptr,
+                c_path.as_ptr(),
                 &mut virname,
                 &mut scanned,
                 self.engine,
@@ -453,6 +455,10 @@ pub fn scan_files(paths: &[String]) -> Vec<ScanResult> {
     let mut all_threats = Vec::new();
 
     for path in paths {
+        let Ok(c_path) = CString::new(path.as_bytes()) else {
+            warn!("[clamav] Skipping path with interior NUL: {}", path);
+            continue;
+        };
         unsafe {
             let mut scanned: u64 = 0;
             let mut virname: *const std::os::raw::c_char = std::ptr::null();
@@ -467,9 +473,8 @@ pub fn scan_files(paths: &[String]) -> Vec<ScanResult> {
                 | clamav_sys::CL_SCAN_PARSE_ELF
                 | clamav_sys::CL_SCAN_PARSE_XMLDOCS;
 
-            let path_ptr = path.as_ptr() as *const std::os::raw::c_char;
             let ret = clamav_sys::cl_scanfile(
-                path_ptr,
+                c_path.as_ptr(),
                 &mut virname,
                 &mut scanned,
                 engine,
